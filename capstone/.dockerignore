@@ -1,0 +1,14 @@
+
+target/
+src/bin/
+.git/
+.vscode/
+.idea/
+*.log
+*.zip
+*.pdf
+.env
+.env.*
+*.pem
+*.key
+*screenshots/
