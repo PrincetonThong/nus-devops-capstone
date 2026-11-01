@@ -3,6 +3,8 @@
 
 ## Task 1: Application Development and Version Control
 
+Finsecurepay application is a Spring Boot Rest API that validates transactions based on fields like transaction ID, amount, currency, source/destination accounts. It returns appropriate HTTP responses for accepted and rejected transactions.
+
 ### Steps:
 
 1. Create a Spring Boot application using Java 17 and Maven. The application provides a `/health` endpoint and a `/validate` endpoint for validating payment transactions.
@@ -36,6 +38,9 @@ The `/health` endpoint returns a successful response.
 ![health endpoint](./task1_screenshots/health_status_success.png)
 
 ## Task 2: Containerisation
+
+Finsecurepay application was containerized using Dockerfile with Maven 3.10.0 and Eclipse Temurin 17.
+The image was tagged `v1.0.0` for first release and pushed to docker hub `tjysats/nus-devops-capstone-finsecurepay`
 
 ### Steps:
 
@@ -73,12 +78,15 @@ docker push tjysats/nus-devops-capstone-finsecurepay:v1.0.0
 
 ## Task 3: Kubernetes and Cloud Deployment
 
+Finsecurepay application was deployed in local setup using Docker-desktop Kubernetes, following which it was deployed to AWS EKS in ap-southeast-1 region.
+In this deployment, 2 app replicas were created along with a LoadBalancer service for external access, and a ConfigMap for managing app settings. Deleting a pod resulted in auto creation, thereby restoring the replica count without manual intervention.
+
 ### Steps:
 
 1. Create `k8s/finsecurepay.yaml` containing the following Kubernetes resources:
    - Namespace `finsecurepay`
    - ConfigMap for application configuration
-   - Deployment with two replicas
+   - Deployment with 2 replicas
    - Readiness and liveness probes
    - LoadBalancer Service for external access
 
@@ -92,7 +100,7 @@ kubectl get all -n finsecurepay
 
 ![local Kubernetes deployment](./task3_screenshots/local_setup_success.png)
 
-3. Create an Amazon EKS cluster in the Singapore region with two managed worker nodes.
+3. Create an Amazon EKS cluster in the Singapore region with 2 managed worker nodes.
 
 ![Amazon EKS cluster](./task3_screenshots/aws_console_cluster.png)
 
