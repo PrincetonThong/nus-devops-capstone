@@ -78,6 +78,63 @@ pipeline {
             }
         }
 
+        // in task3 we did aws eks update-kubeconfig --region ap-southeast-1 --name finsecurepay-cluster
+        stage('Verify AWS EKS') {
+            steps {
+                dir('capstone') {
+                    sh 'aws --version'
+                    sh 'eksctl version'
+                    sh 'kubectl version --client'
+                    sh 'aws sts get-caller-identity > /dev/null'
 
+                    script {
+                        def check_if_cluster_exists = sh(
+                            script: 'aws eks describe-cluster --region ${AWS_REGION} --name ${AWS_EKS_CLUSTER_NAME} > /dev/null',
+                            returnStatus: true
+                        )
+
+                        if (check_if_cluster_exists == 0) {
+                            echo 'EKS cluster ${env.AWS_EKS_CLUSTER_NAME} exists'
+                        } else {
+                            sh 'eksctl create cluster --name ${AWS_EKS_CLUSTER_NAME} --region ${AWS_REGION} --nodes 2 --node-type t3.medium --managed'
+                        }
+                    }
+
+                    sh 'aws eks update-kubeconfig --region ${AWS_REGION} --name ${AWS_EKS_CLUSTER_NAME}'
+                    sh 'kubectl get nodes'
+                }
+            }
+        }
+
+        // in task3 we did kubectl apply -f k8s/finsecurepay.yaml and deploy image created
+        stage('Deploy to EKS') {
+            steps {
+                dir('capstone') {
+                    script {
+                        def check_if_deployment_exists = sh(
+                            script: 'kubectl get deployment finsecurepay -n ${AWS_NAMESPACE} > /dev/null 2>&1',
+                            returnStatus: true
+                        )
+
+                        if (check_if_deployment_exists != 0) {
+                            echo 'Deployment does not exist. Applying Task 3 Kubernetes YAML...'
+                            sh 'kubectl apply -f k8s/finsecurepay.yaml'
+                        }
+                    }
+
+                    sh 'kubectl set image deployment/finsecurepay finsecurepay-container=${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER} -n ${AWS_NAMESPACE}'
+                }
+            }
+        }
+
+        stage('Verify Rollout') {
+            steps {
+                dir('capstone') {
+                    sh 'kubectl rollout status deployment/finsecurepay -n ${AWS_NAMESPACE} --timeout=300s'
+                    sh 'kubectl get all -n ${AWS_NAMESPACE}'
+                    sh 'kubectl get deployment finsecurepay -n ${AWS_NAMESPACE} -o jsonpath="{.spec.template.spec.containers[0].image}"'
+                }
+            }
+        }
     }
 }
