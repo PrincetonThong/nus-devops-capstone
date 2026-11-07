@@ -6,7 +6,7 @@ WORKDIR /build
 
 # only needed for this laptop that has zscaler configured
 # COPY zscaler-root-ca.cer /tmp/zscaler-root-ca.cer
-# RUN keytool -importcert -noprompt -trustcacerts -alias zscaler-root-ca -file /tmp/zscaler-root-ca.cer -keystore /opt/java/openjdk/lib/security/cacerts -storepass changeit && rm /tmp/zscaler-root-ca.cer
+RUN --mount=type=secret,id=zscaler_root_ca,required=true keytool -importcert -noprompt -trustcacerts -alias zscaler-root-ca -file /run/secrets/zscaler_root_ca -keystore /opt/java/openjdk/lib/security/cacerts -storepass changeit
 
 COPY pom.xml .
 COPY src ./src

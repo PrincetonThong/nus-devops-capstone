@@ -41,3 +41,4 @@ src/bin/
 !.env.example
 *.pem
 *.key
+zscaler-root-ca.cer

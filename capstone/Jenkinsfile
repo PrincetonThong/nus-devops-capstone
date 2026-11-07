@@ -15,6 +15,7 @@ pipeline {
     }
     
     // https://www.jenkins.io/doc/book/pipeline/syntax/#declarative-steps
+    // in initial build, got this message "Batch scripts can only be run on Windows nodes", so need to use linux
     stages {
         stage('Checkout') {
             steps {
@@ -26,7 +27,7 @@ pipeline {
         stage('Build') {
             steps {
                 dir('capstone') {
-                    bat '.\\mvnw.cmd clean compile'
+                    sh 'sh ./mvnw -B -ntp clean compile'
                 }
             }
         }
@@ -35,7 +36,15 @@ pipeline {
         stage('Unit Tests') {
             steps {
                 dir('capstone') {
-                    bat '.\\mvnw.cmd test'
+                    sh 'sh ./mvnw -B -ntp test'
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                dir('capstone') {
+                    sh 'sh ./mvnw -B -ntp package -DskipTests'
                 }
             }
         }
@@ -44,7 +53,12 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 dir('capstone') {
-                    bat 'docker build -t %DOCKER_IMAGE%:v1.0.%BUILD_NUMBER% .'
+                    // sh 'docker build -t ${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER} .'
+                    
+                    // to be able to sync on this laptop, we need to create zscaler credential in jenkins, and then in dockerfile re-enable the zscaler part
+                    withCredentials([file(credentialsId: 'zscaler-root-ca', variable: 'ZSCALER_CA')]) {
+                        sh 'DOCKER_BUILDKIT=1 docker build --secret id=zscaler_root_ca,src="$ZSCALER_CA" -t "${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER}" .'
+                    }
                 }
             }
         }

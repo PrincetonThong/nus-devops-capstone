@@ -11,4 +11,5 @@ src/bin/
 .env.*
 *.pem
 *.key
+zscaler-root-ca.cer
 *screenshots/
