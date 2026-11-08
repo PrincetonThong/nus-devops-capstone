@@ -107,9 +107,11 @@ pipeline {
                 dir('capstone') {
                     // https://www.jenkins.io/doc/book/pipeline/docker/
                     script {
-                        docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-tjysats') {
-                            def image = docker.image("${env.DOCKER_IMAGE}:v1.0.${env.BUILD_NUMBER}")
-                            image.push()
+                        retry(3) {
+                            docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-tjysats') {
+                                def image = docker.image("${env.DOCKER_IMAGE}:v1.0.${env.BUILD_NUMBER}")
+                                image.push()
+                            }
                         }
                     }
                 }
