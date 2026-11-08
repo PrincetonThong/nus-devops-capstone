@@ -132,3 +132,146 @@ kubectl get all -n finsecurepay
 7. Delete one application pod and verify that the Deployment automatically creates a replacement pod while maintaining two replicas.
 
 ![automatic pod recreation](./task3_screenshots/eks_delete_pod.png)
+
+## Task 4: CI/CD Pipeline Automation
+
+Jenkins connects to GitHub repo and runs pipelines from `Jenkinsfile`. The pipeline builds and tests the app, packages the app, builds and pushes a versioned Docker image, deploys the app to AWS EKS, and verifies the rollout.
+
+### Steps:
+
+1. Start Jenkins and log in at `http://localhost:8091`. Here Jenkins runs locally in a Docker container, with Docker CLI, AWS CLI, `eksctl` and `kubectl` installed inside, so that the pipeline is able to build images and deploy to EKS.
+
+![jenkins_homepage](./task4_screenshots/jenkins_homepage.png)
+
+2. Add the credentials needed by the pipeline under Manage Jenkins > Credentials > System > Global:
+   - `dockerhub-tjysats` (username with password), used to push images to Docker Hub
+   - `zscaler-root-ca` (secret file), used during Docker build
+
+Since this laptop is behind Zscaler, Maven inside `docker build` is not able to download dependencies unless it trusts the Zscaler root CA. Instead of committing the certificate into the repo, it is stored as a Jenkins secret file and passed into the build as a BuildKit secret (`--secret id=zscaler_root_ca`), so it does not end up in Git history or in the final image.
+
+![adding_zscaler_as_secret](./task4_screenshots/adding_zscaler_as_secret.png)
+
+Once created, both credentials show up as follows, with the Docker Hub password masked:
+
+![jenkins_store](./task4_screenshots/jenkins_store.png)
+
+3. Create a Jenkins Pipeline job and configure it to use the Git repository and `capstone/Jenkinsfile`.
+
+![Jenkins pipeline](./task4_screenshots/create_new_jenkins_pipeline.png)
+
+Under Pipeline, select "Pipeline script from SCM", set the repository URL, branch `*/master`, and Script Path `capstone/Jenkinsfile` (since the app sits in the `capstone` subfolder of the repo):
+
+![link_to_github_jenkinsfile](./task4_screenshots/link_to_github_jenkinsfile.png)
+
+4. The first version of `Jenkinsfile` reused the Task 1 commands (`.\mvnw.cmd`) with `bat`. However, build #2 failed at the Build stage with "Batch scripts can only be run on Windows nodes". This is because the Jenkins container runs on Linux, even though the laptop is Windows.
+
+![jenkins_pipeline_bat_commands_failure](./task4_screenshots/jenkins_pipeline_bat_commands_failure.png)
+
+After changing `bat` to `sh` (and `.\mvnw.cmd` to `sh ./mvnw`), build #3 passed and pushed image `v1.0.3` to Docker Hub:
+
+![initial_pipeline_success](./task4_screenshots/initial_pipeline_success.png)
+
+5. Define the following stages in `Jenkinsfile`:
+   - Checkout
+   - Build
+   - Unit Tests
+   - Package
+   - Build Docker Image
+   - Push to Dockerhub
+   - Verify AWS EKS
+   - Deploy to EKS
+   - Verify Rollout
+
+The pipeline creates the EKS cluster when it does not exist and reuses it when it is available.
+- As this AWS account is on the Free Tier plan. Hence, the node type should be set as `t3.small`.
+
+![EKS verification](./task4_screenshots/create_cluster_if_not_exist.png)
+
+Once the cluster is ready, `kubectl get nodes` shows 2 nodes in Ready state. As the deployment also did not exist yet, the pipeline applies the Task 3 YAML before setting the image to `v1.0.5`:
+
+![eks_cluster_ready](./task4_screenshots/eks_cluster_ready.png)
+
+The rollout completes with 2 pods running, and build #5 finishes successfully with image `v1.0.5`:
+
+![successful_rollout](./task4_screenshots/successful_rollout.png)
+
+6. Verify the deployment from the laptop using the following commands:
+
+```powershell
+aws eks update-kubeconfig --region ap-southeast-1 --name finsecurepay-cluster
+kubectl get nodes
+kubectl get all -n finsecurepay -o wide
+kubectl get service finsecurepay-service -n finsecurepay -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+```
+
+Here, the replicaset with `v1.0.5` has 2 pods, while the replicaset with `v1.0.0` (the image in the Task 3 YAML) is scaled down to 0:
+
+![info_on_deployed_cluster_of_v1.0.5](./task4_screenshots/info_on_deployed_cluster_of_v1.0.5.png)
+
+Using the LoadBalancer hostname, the `/health` endpoint returns `"version": "local"`, and a valid transaction is accepted:
+
+![health_status_of_v1.0.5](./task4_screenshots/health_status_of_v1.0.5.png)
+
+![validate_transaction_for_v1.0.5](./task4_screenshots/validate_transaction_for_v1.0.5.png)
+
+7. Add SCM polling to `Jenkinsfile`:
+
+```groovy
+triggers {
+    pollSCM('H/5 * * * *')
+}
+```
+
+Since Jenkins runs on localhost, GitHub is not able to reach it through a webhook. Hence, Jenkins polls GitHub every 5 minutes instead.
+
+Jenkins only registers the trigger after the job runs once with the updated `Jenkinsfile` (build #6). This time, the pipeline detects the existing cluster and deployment, so it skips cluster creation and only updates the image to `v1.0.6`:
+
+![update_jenkins_job_part1](./task4_screenshots/update_jenkins_job_part1.png)
+
+![update_jenkins_job_part2](./task4_screenshots/update_jenkins_job_part2.png)
+
+8. Push a source code change. Here, the `/health` version in `ValidationController.java` is changed from `"local"` to `"cicd-ver2"`. Jenkins detects the change and starts a new build (#7) automatically, shown as "Started by an SCM change".
+
+![SCM trigger](./task4_screenshots/jenkins_build_trigged_by_scm.png)
+
+![SCM polling log](./task4_screenshots/jenkins_build_trigged_by_scm_polling_log.png)
+
+Build #7 builds and pushes image `v1.0.7`, deploys it to EKS, and completes the rollout successfully.
+
+![successful rollout](./task4_screenshots/successful_v1.0.7.png)
+
+The health endpoint confirms that the new application version is running.
+
+![updated application version](./task4_screenshots/upgrade_to_v1.0.7_correct_version.png)
+
+9. Introduce a failing JUnit test and verify that the pipeline stops at the Unit Tests stage. The package, image, push, and deployment stages remain skipped, while EKS continues to use the previous image.
+
+![failed test](./task4_screenshots/failed_junit_test_prevent_deployment.png)
+
+![previous image remains deployed](./task4_screenshots/still_use_previous_image_if_failed_junit.png)
+
+10. Verify that an unsuccessful rollout automatically returns the Deployment to the previous working revision.
+
+To simulate a bad release, the `Dockerfile` `ENTRYPOINT` is pointed to a jar file that does not exist:
+
+```docker
+ENTRYPOINT ["java", "-jar", "/app/unknown.jar"]
+```
+
+The image still builds and pushes successfully (build #9), but the new pod crashes on startup and goes into `CrashLoopBackOff`. As the pod never becomes ready, `kubectl rollout status` times out after 300s, and the `post { failure }` block in the `Verify Rollout` stage runs `kubectl rollout undo` to return to `v1.0.7`:
+
+Since the Task 3 YAML uses `maxUnavailable: 0`, the old `v1.0.7` pods keep serving traffic while the new pod is failing. The build is still marked as FAILURE, so the failed release remains visible in Jenkins.
+
+![automatic rollback](./task4_screenshots/auto_rollback.png)
+
+Lastly, revert the `Dockerfile` and push, so that the next build (#10) deploys a working image again.
+
+11. View the rollout history and manually return the Deployment to the known-good `v1.0.5` revision using:
+
+```powershell
+kubectl rollout history deployment/finsecurepay -n finsecurepay
+kubectl rollout undo deployment/finsecurepay -n finsecurepay --to-revision=2
+kubectl rollout status deployment/finsecurepay -n finsecurepay --timeout=300s
+```
+
+![manual rollback](./task4_screenshots/manual_rollback.png)
