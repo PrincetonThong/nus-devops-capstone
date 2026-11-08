@@ -7,6 +7,10 @@ pipeline {
         timestamps()
     }
 
+    triggers {
+        pollSCM('H/5 * * * *')
+    }
+
     environment {
         DOCKER_IMAGE = 'tjysats/nus-devops-capstone-finsecurepay'
         AWS_REGION = 'ap-southeast-1'
@@ -132,6 +136,17 @@ pipeline {
                 dir('capstone') {
                     sh 'kubectl rollout status deployment/finsecurepay -n ${AWS_NAMESPACE} --timeout=300s'
                     sh 'kubectl get all -n ${AWS_NAMESPACE}'
+                    sh 'kubectl get deployment finsecurepay -n ${AWS_NAMESPACE} -o jsonpath="{.spec.template.spec.containers[0].image}"'
+                }
+            }
+
+            // https://www.jenkins.io/doc/book/pipeline/syntax/#post
+            // if new pods didnt become ready, auto roll back to previous revision
+            post {
+                failure {
+                    echo 'Rollout failed. Rolling back to previous revision...'
+                    sh 'kubectl rollout undo deployment/finsecurepay -n ${AWS_NAMESPACE}'
+                    sh 'kubectl rollout status deployment/finsecurepay -n ${AWS_NAMESPACE} --timeout=300s'
                     sh 'kubectl get deployment finsecurepay -n ${AWS_NAMESPACE} -o jsonpath="{.spec.template.spec.containers[0].image}"'
                 }
             }
