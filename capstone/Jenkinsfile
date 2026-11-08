@@ -71,7 +71,7 @@ pipeline {
                     
                     sh '"$TRIVY_PATH" fs --timeout 15m --scanners vuln --no-progress --format json --output target/trivy-dependency-report.json .'
 
-                    sh '"$TRIVY_PATH" convert --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-dependency-report.json'
+                    sh '"$TRIVY_PATH" convert --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-dependency-report.json'
                 }
             }
         }
@@ -96,7 +96,7 @@ pipeline {
                 dir('capstone') {
                     sh '"$TRIVY_PATH" image --timeout 15m --scanners vuln --no-progress --format json --output target/trivy-image-report.json "${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER}"'
 
-                    sh ' "$TRIVY_PATH" convert --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-image-report.json'
+                    sh '"$TRIVY_PATH" convert --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-image-report.json'
                 }
             }
         }
