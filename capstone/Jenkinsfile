@@ -16,6 +16,7 @@ pipeline {
         AWS_REGION = 'ap-southeast-1'
         AWS_EKS_CLUSTER_NAME = 'finsecurepay-cluster'
         AWS_NAMESPACE = 'finsecurepay'
+        TRIVY_PATH = '/var/jenkins_home/bin/trivy'
     }
     
     // https://www.jenkins.io/doc/book/pipeline/syntax/#declarative-steps
@@ -53,6 +54,28 @@ pipeline {
             }
         }
 
+        // task 5 for static code quality analysis
+        stage('Code Quality') {
+            steps {
+                dir('capstone') {
+                    sh 'sh ./mvnw -B -ntp com.github.spotbugs:spotbugs-maven-plugin:4.10.5.0:check'
+                }
+            }
+        }
+
+        // security scan for app proj dependencies
+        stage('Dependency Scan') {
+            steps {
+                dir('capstone') {
+                    sh '"$TRIVY_PATH" --version'
+                    
+                    sh '"$TRIVY_PATH" fs --timeout 15m --scanners vuln --no-progress --format json --output target/trivy-dependency-report.json .'
+
+                    sh '"$TRIVY_PATH" convert --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-dependency-report.json'
+                }
+            }
+        }
+
         // in task2 we did docker build -t tjysats/nus-devops-capstone-finsecurepay:v1.0.0 .
         stage('Build Docker Image') {
             steps {
@@ -63,6 +86,17 @@ pipeline {
                     withCredentials([file(credentialsId: 'zscaler-root-ca', variable: 'ZSCALER_CA')]) {
                         sh 'DOCKER_BUILDKIT=1 docker build --secret id=zscaler_root_ca,src="$ZSCALER_CA" -t "${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER}" .'
                     }
+                }
+            }
+        }
+
+        // security scan of built docker image
+        stage('Container Image Scan') {
+            steps {
+                dir('capstone') {
+                    sh '"$TRIVY_PATH" image --timeout 15m --scanners vuln --no-progress --format json --output target/trivy-image-report.json "${DOCKER_IMAGE}:v1.0.${BUILD_NUMBER}"'
+
+                    sh ' "$TRIVY_PATH" convert --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-image-report.json'
                 }
             }
         }
@@ -150,6 +184,15 @@ pipeline {
                     sh 'kubectl get deployment finsecurepay -n ${AWS_NAMESPACE} -o jsonpath="{.spec.template.spec.containers[0].image}"'
                 }
             }
+        }
+    }
+
+    // save archive reports
+    post {
+        always {
+            junit testResults: 'capstone/target/surefire-reports/*.xml', allowEmptyResults: true
+
+            archiveArtifacts artifacts: 'capstone/target/spotbugsXml.xml,capstone/target/trivy-*.json', allowEmptyArchive: true
         }
     }
 }
