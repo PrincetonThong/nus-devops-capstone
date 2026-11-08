@@ -275,3 +275,81 @@ kubectl rollout status deployment/finsecurepay -n finsecurepay --timeout=300s
 ```
 
 ![manual rollback](./task4_screenshots/manual_rollback.png)
+
+## Task 5: DevSecOps and Security Integration
+
+The Jenkins pipeline adds SpotBugs code-quality analysis and Trivy dependency and container-image scans. The pipeline archives the generated XML and JSON reports after each build.
+
+SpotBugs is used instead of SonarQube because it runs as a Maven plugin inside the existing Jenkins container and does not require a separate SonarQube server or database on this 8 GB laptop. It still detects Java bug patterns such as `EI_EXPOSE_REP`.
+
+### Steps:
+
+1. Install Trivy `0.76.2` in the persistent Jenkins home volume and verify the installation:
+
+```powershell
+docker exec --user root jenkins sh -lc 'mkdir -p /var/jenkins_home/bin && curl -fsSL https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz | tar -xz -C /var/jenkins_home/bin trivy && chown jenkins:jenkins /var/jenkins_home/bin/trivy && chmod 755 /var/jenkins_home/bin/trivy'
+docker exec jenkins /var/jenkins_home/bin/trivy --version
+```
+
+`Jenkinsfile` sets `TRIVY_PATH` to `/var/jenkins_home/bin/trivy`. The binary remains available when the Jenkins container restarts because `/var/jenkins_home` uses the `jenkins_home` Docker volume.
+
+2. Run SpotBugs during the Code Quality stage. Build #13 fails with `EI_EXPOSE_REP` and `EI_EXPOSE_REP2` findings in `ValidationResult`, so the later stages remain skipped.
+
+![SpotBugs pipeline failure](./task5_screenshots/pipeline_view_of_spotbugs_error.png)
+
+![SpotBugs findings](./task5_screenshots/spotbugs_error_in_jenkins_pipeline.png)
+
+The generated SpotBugs XML report records both findings.
+
+![SpotBugs XML report](./task5_screenshots/spotbugs_xml_report.png)
+
+3. Copy the `reasons` list into an immutable list in the `ValidationResult` constructor. The original record stores and returns the caller's mutable list, allowing external code to change a validation result after it is created.
+
+```java
+public ValidationResult {
+    reasons = List.copyOf(reasons);
+}
+```
+
+SpotBugs then reports 0 bugs and "Code Quality" stage succeeds.
+
+![successful code-quality check](./task5_screenshots/code_quality_ok.png)
+
+4. Run Trivy against Maven dependencies. Add the log4j controlled vulnerable dependency to demonstrate security gate:
+
+```xml
+<dependency>
+    <groupId>org.apache.logging.log4j</groupId>
+    <artifactId>log4j-core</artifactId>
+    <version>2.14.1</version>
+</dependency>
+```
+
+Build #15 reports 2 critical and 1 high findings. Trivy writes the complete JSON report, and the following command returns exit code 1 when it contains a High or Critical vulnerability:
+
+```groovy
+sh '"$TRIVY_PATH" convert --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format table target/trivy-dependency-report.json'
+```
+
+This fails the Dependency Scan stage and prevents the image build, push and deployment stages from running. The red "Verify AWS EKS" icon in Build #15 pipeline view is a display quirk as console log confirms that the stage is skipped due to the earlier failure.
+
+![blocked vulnerable dependency](./task5_screenshots/dependency_scan_critical_findings_log4j.png)
+
+5. Remove the unused vulnerable dependency. Build #18 includes `--scanners vuln` when converting the report, so dependency scan displays a summary table with 0 vulnerabilities.
+
+![clean dependency scan](./task5_screenshots/dependency_scan_no_errors.png)
+
+6. Scan the built container image with Trivy. Build #18 reports 0 High or Critical vulnerabilities, so the pipeline continues.
+
+![clean container-image scan](./task5_screenshots/container_scan_no_errors.png)
+
+7. Store the Docker Hub password and Zscaler certificate in Jenkins Credentials.
+The laptop's AWS CLI directory is mounted from `~/.aws` to `/var/jenkins_home/.aws` inside the Jenkins container. This lets Jenkins use the active AWS login session without placing AWS credentials in the repository or `Jenkinsfile`.
+
+![Jenkins credential store](./task4_screenshots/jenkins_store.png)
+
+8. Archive the SpotBugs, dependency-scan and image-scan reports. The remediated pipeline completes successfully through deployment and rollout.
+
+![generated security reports](./task5_screenshots/generated_artifacts.png)
+
+![successful DevSecOps pipeline](./task5_screenshots/final_pipeline.png)
