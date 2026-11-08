@@ -21,7 +21,7 @@ public class ValidationController {
         return Map.of(
             "status", "up",
             "service", "finsecurepay",
-            "version", "cicd-ver2"
+            "version", "local"
         );
     }
 
