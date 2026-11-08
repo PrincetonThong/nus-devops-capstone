@@ -7,4 +7,8 @@ public record ValidationResult(
     boolean valid,
     String status,
     List<String> reasons
-) {}
+) {
+    public ValidationResult {
+        reasons = List.copyOf(reasons);
+    }
+}
