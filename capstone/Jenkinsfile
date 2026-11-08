@@ -94,9 +94,9 @@ pipeline {
                         )
 
                         if (check_if_cluster_exists == 0) {
-                            echo 'EKS cluster ${env.AWS_EKS_CLUSTER_NAME} exists'
+                            echo "EKS cluster ${env.AWS_EKS_CLUSTER_NAME} exists"
                         } else {
-                            sh 'eksctl create cluster --name ${AWS_EKS_CLUSTER_NAME} --region ${AWS_REGION} --nodes 2 --node-type t3.medium --managed'
+                            sh 'eksctl create cluster --name ${AWS_EKS_CLUSTER_NAME} --region ${AWS_REGION} --nodegroup-name finsecurepay-nodes --nodes 2 --node-type t3.small --managed'
                         }
                     }
 
