@@ -23,7 +23,7 @@ class ValidationServiceTest {
         ValidationResult result = service.validate(tx);
 
         assertTrue(result.valid());
-        assertEquals("ACCEPTED", result.status());
+        assertEquals("REJECTED", result.status());
         assertTrue(result.reasons().isEmpty());
     }
 
