@@ -1,0 +1,54 @@
+services:
+  finsecurepay:
+    image: tjysats/nus-devops-capstone-finsecurepay:${FINSECUREPAY_TAG:-v1.0.18}
+    ports:
+      - "127.0.0.1:8082:8080"
+    environment:
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,prometheus"
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - finsecurepay
+      - node-exporter
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    ports:
+      - "127.0.0.1:9100:9100"
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: "smtp.resend.com:587"
+      GF_SMTP_USER: "resend"
+      GF_SMTP_PASSWORD__FILE: "/run/secrets/resend_api_key"
+      GF_SMTP_FROM_ADDRESS: "onboarding@resend.dev"
+      GF_SMTP_FROM_NAME: "Finsecurepay Grafana"
+      GF_SMTP_STARTTLS_POLICY: "MandatoryStartTLS"
+      SSL_CERT_FILE: "/run/secrets/zscaler_ca_bundle"
+      NOTIFY_EMAIL: "${NOTIFY_EMAIL:?Set NOTIFY_EMAIL before starting monitoring}"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/alerting.yml:/etc/grafana/provisioning/alerting/finsecurepay.yml:ro
+    secrets:
+      - resend_api_key
+      - zscaler_ca_bundle
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-data:
+
+secrets:
+  resend_api_key:
+    environment: "RESEND_API_KEY"
+  zscaler_ca_bundle:
+    environment: "ZSCALER_CA_BUNDLE"

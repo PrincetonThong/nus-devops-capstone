@@ -1,0 +1,21 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: Finsecurepay Email
+    receivers:
+      - uid: finsecurepay-email
+        type: email
+        disableResolveMessage: false
+        settings:
+          addresses: $NOTIFY_EMAIL
+
+policies:
+  - orgId: 1
+    receiver: Finsecurepay Email
+    group_by:
+      - grafana_folder
+      - alertname
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 4h

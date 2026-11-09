@@ -195,6 +195,19 @@ pipeline {
             junit testResults: 'capstone/target/surefire-reports/*.xml', allowEmptyResults: true
 
             archiveArtifacts artifacts: 'capstone/target/spotbugsXml.xml,capstone/target/trivy-*.json', allowEmptyArchive: true
+
+            // task 6: email build result through Resend's HTTPS API because SMTP is unavailable in this environment
+            // recipient is a credential too, to keep personal email address out of public repo
+            withEnv(["BUILD_RESULT=${currentBuild.currentResult}"]) {
+                withCredentials([
+                    string(credentialsId: 'resend-api-key', variable: 'RESEND_API_KEY'),
+                    string(credentialsId: 'notify-email', variable: 'NOTIFY_EMAIL')
+                ]) {
+                    sh '''
+                        curl -sS --fail-with-body -H "Authorization: Bearer $RESEND_API_KEY" -H "Content-Type: application/json" --data '{"from":"onboarding@resend.dev","to":"'"$NOTIFY_EMAIL"'","subject":"'"$JOB_NAME"' #'"$BUILD_NUMBER"': '"$BUILD_RESULT"'","text":"Build '"$BUILD_RESULT"'. Console output: '"$BUILD_URL"'console"}' https://api.resend.com/emails
+                    '''
+                }
+            }
         }
     }
 }

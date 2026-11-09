@@ -335,7 +335,7 @@ This fails the Dependency Scan stage and prevents the image build, push and depl
 
 ![blocked vulnerable dependency](./task5_screenshots/dependency_scan_critical_findings_log4j.png)
 
-5. Remove the unused vulnerable dependency. Build #18 includes `--scanners vuln` when converting the report, so dependency scan displays a summary table with 0 vulnerabilities.
+5. Remove the unused vulnerable dependency. Build #18 includes `--scanners vuln` when converting the report, so dependency scan displays a summary table with 0 High or Critical vulnerabilities.
 
 ![clean dependency scan](./task5_screenshots/dependency_scan_no_errors.png)
 
@@ -353,3 +353,188 @@ The laptop's AWS CLI directory is mounted from `~/.aws` to `/var/jenkins_home/.a
 ![generated security reports](./task5_screenshots/generated_artifacts.png)
 
 ![successful DevSecOps pipeline](./task5_screenshots/final_pipeline.png)
+
+## Task 6: Monitoring, Alerting and Logging
+
+For Task 6, Prometheus collects the Finsecurepay application metrics from Spring Boot Actuator and infrastructure metrics from Node Exporter. Grafana then displays the request, JVM memory and Docker host memory metrics. A Grafana alert monitors the application and sends an email when the application is down or restored.
+
+### Steps:
+
+1. First, set the Finsecurepay image tag, Resend API key and notification email in PowerShell:
+
+```powershell
+$env:FINSECUREPAY_TAG = "v1.0.18"
+
+$secureResendKey = Read-Host "Resend API key" -AsSecureString
+$env:RESEND_API_KEY = [System.Net.NetworkCredential]::new("", $secureResendKey).Password
+$env:NOTIFY_EMAIL = Read-Host "Notification recipient email"
+$env:GRAFANA_PORT = "3001"
+```
+
+Here, the API key and recipient email are only stored in the current PowerShell session, and are not added to the repository.
+
+Since this laptop is behind Zscaler, export the installed Zscaler root certificates so that Grafana can verify the TLS connection to Resend:
+
+```powershell
+$zscalerRoots = Get-ChildItem Cert:\CurrentUser\Root |
+    Where-Object { $_.Subject -match "Zscaler Root CA" } |
+    Sort-Object Thumbprint -Unique
+
+$env:ZSCALER_CA_BUNDLE = ($zscalerRoots | ForEach-Object {
+    $base64 = [Convert]::ToBase64String(
+        $_.RawData,
+        [Base64FormattingOptions]::InsertLineBreaks
+    )
+    "-----BEGIN CERTIFICATE-----`n$base64`n-----END CERTIFICATE-----"
+}) -join "`n"
+```
+
+Next, start Finsecurepay, Prometheus, Node Exporter and Grafana using Docker Compose:
+
+```powershell
+docker compose -f monitoring/compose.yaml up -d
+```
+
+Here, Docker Compose uses Docker secrets for the Resend API key and Zscaler certificate bundle, so that they are not stored in the repository. Pinned images are used for Prometheus, Node Exporter and Grafana. Finsecurepay runs on `http://localhost:8082`, Prometheus on `http://localhost:9090`, Node Exporter on `http://localhost:9100`, and Grafana on `http://localhost:3001`. Grafana uses port 3001 because port 3000 is occupied on this laptop.
+
+2. Expose Spring Boot metrics through `/actuator/prometheus`. These include HTTP request, JVM memory, process CPU and disk metrics.
+
+![Prometheus application metrics](./task6_screenshots/prometheus_metrics.png)
+
+Configure Prometheus to scrape the Finsecurepay Actuator endpoint, Prometheus itself and Node Exporter. A successful setup shows all 3 targets in the `UP` state.
+
+![Prometheus targets](./task6_screenshots/prometheus_targets.png)
+
+3. Send a valid transaction every five seconds to generate continuous application traffic:
+
+```powershell
+$validTransaction = @{
+    transactionId = "TX-1001"
+    amount = 150.50
+    currency = "SGD"
+    sourceAccount = "1001"
+    destinationAccount = "1002"
+} | ConvertTo-Json
+
+while ($true) {
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri "http://localhost:8082/validate" `
+        -ContentType "application/json" `
+        -Body $validTransaction | Out-Null
+    Start-Sleep -Milliseconds 5000
+}
+```
+
+![Automated validation traffic](./task6_screenshots/automated_trigger_of_validation_requests.png)
+
+4. Add Prometheus as the Grafana data source using `http://prometheus:9090`. Then, create a dashboard with 3 live panels:
+
+- Validation requests per minute:
+
+```promql
+sum(increase(http_server_requests_seconds_count{job="finsecurepay",uri="/validate"}[1m]))
+```
+
+- JVM heap memory usage in MiB:
+
+```promql
+sum(jvm_memory_used_bytes{job="finsecurepay",area="heap"}) / 1024 / 1024
+```
+
+- Infrastructure memory usage percentage from Node Exporter:
+
+```promql
+100 * (1 - node_memory_MemAvailable_bytes{job="node-exporter"} / node_memory_MemTotal_bytes{job="node-exporter"})
+```
+
+![Grafana monitoring dashboard](./task6_screenshots/grafana_dashboard.png)
+
+![Validation request metric](./task6_screenshots/grafana_requests_per_min.png)
+
+![JVM heap metric](./task6_screenshots/grafana_heap_memory.png)
+
+5. Create the `FinsecurepayUnavailable` Grafana-managed alert using:
+
+```promql
+up{job="finsecurepay"}
+```
+
+Set the alert condition to below `1`. Grafana checks the rule every 30 seconds and changes it to Firing when the condition stays true for 30 seconds.
+
+The `monitoring/grafana/alerting.yml` file creates the `Finsecurepay Email` contact point, using Resend SMTP on port 587 with mandatory STARTTLS. In Grafana, select `Finsecurepay Email` as the contact point for the alert rule. The setting `disableResolveMessage: false` sends both Firing and Resolved notifications.
+
+Send a test notification from the contact point to verify the email setup:
+
+![Grafana test email](./task6_screenshots/grafana_test_email_received.png)
+
+6. To simulate an application outage, stop the Finsecurepay container:
+
+```powershell
+docker stop monitoring-finsecurepay-1
+```
+
+Here, Prometheus shows the Finsecurepay target as `DOWN` because it can no longer scrape the application.
+
+![Prometheus target down](./task6_screenshots/simulate_app_down_prometheus_targets.png)
+
+Since the Grafana query changes from `1` to `0`, it breaches the below-1 threshold and changes the alert to Firing.
+
+![Grafana alert firing](./task6_screenshots/alert_firing.png)
+
+Grafana sends the Firing email through the `Finsecurepay Email` contact point:
+
+![Grafana alert firing email](./task6_screenshots/grafana_alert_firing_email.png)
+
+7. Start the application again and check its logs:
+
+```powershell
+docker start monitoring-finsecurepay-1
+docker logs monitoring-finsecurepay-1 --tail 50
+```
+
+Here, the logs show the Spring Boot startup process, application port and Actuator endpoint initialization. These logs can be used to investigate startup failures and application errors.
+
+![Application restoration and logs](./task6_screenshots/restore_back_app.png)
+
+After the application starts again, Prometheus successfully scrapes it, the query returns `1` and the alert returns to Normal.
+
+![Grafana alert restored](./task6_screenshots/grafana_restore_back_app.png)
+
+A Resolved email is also sent to show that the application is available again:
+
+![Grafana alert resolved email](./task6_screenshots/grafana_alert_resolved_email.png)
+
+Application logs and Kubernetes events from EKS can also be viewed using:
+
+```powershell
+kubectl get pods -n finsecurepay
+kubectl logs deployment/finsecurepay -n finsecurepay --tail 50
+kubectl get events -n finsecurepay --sort-by=.lastTimestamp
+```
+
+Here, we can see both pods running, the Spring Boot startup logs and the Kubernetes rollout events. The readiness probe warnings occur while the new pods are starting, before they become ready.
+
+![EKS application logs and events](./task6_screenshots/eks_kubectl_logs.png)
+
+8. Set Jenkins to send an email notification for every build result.
+
+Grafana alerts and Jenkins email notifications have different purposes. Grafana sends application availability notifications, while Jenkins sends the CI/CD build result.
+
+Since Gmail SMTP times out from the Jenkins container and Outlook rejects password-based SMTP authentication on this network, Jenkins uses the Resend HTTPS API on port 443. Resend sends from `onboarding@resend.dev` to the email address registered with the Resend account.
+
+Create a Resend API key with "Sending access" permission. Then, add the following 2 credentials under Manage Jenkins > Credentials > System > Global:
+
+- `resend-api-key`: Resend API key
+- `notify-email`: notification recipient email
+
+After adding the 2 credentials, Jenkins shows the following list:
+![Jenkins credentials](./task6_screenshots/jenkins_credentials_list.png)
+
+Jenkins sends the email through a `curl` call to Resend in the pipeline-level `post { always { ... } }` block of `Jenkinsfile`. Therefore, it runs for both successful and failed builds. Jenkins reads both values from its credential store and masks them as `****` in the console output. If Resend rejects the request, `--fail-with-body` fails the notification step.
+
+Jenkins build `#24` finishes successfully through all stages, and sends the job name, build number and result by email:
+
+![Jenkins build 24 success](./task6_screenshots/jenkins_build_24_success.png)
+
+![Jenkins email received](./task6_screenshots/jenkins_email_received.png)
